@@ -1,0 +1,15 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "**/.vs": true,
+        "**/bin": true,
+        "**/obj": true,
+        "**/packages": true,
+        "**/coverage": true,
+        "**/.idea": true,
+    }
+}

@@ -1,0 +1,1 @@
+The solution for CodinGame's [Nonogram Inversor](https://www.codingame.com/training/hard/nonogram-inversor) Game.
