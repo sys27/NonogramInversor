@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.Intrinsics.X86;
 
@@ -55,7 +56,7 @@ namespace NonogramInversor
                     {
                         var positionedFlag = (uint)(flag << (length - rule - start));
                         var newBlock = block | positionedFlag;
-                        var newConsumed = consumed + rule + start + 1;
+                        var newConsumed = consumed + rule + 1;
 
                         blocks.Enqueue((newBlock, newConsumed));
                     }
@@ -105,10 +106,61 @@ namespace NonogramInversor
             return true;
         }
 
+        private bool PartialCheck(int rowIndex)
+        {
+            for (var column = 0; column < columnRules.Length; column++)
+            {
+                var ruleIndex = 0;
+                var rules = columnRules[column];
+
+                var flag = 1 << (columnRules.Length - column - 1);
+                var count = 0;
+                var prev = 0u;
+
+                for (var row = 0; row <= rowIndex && row < board.Length; row++)
+                {
+                    var cell = (uint)(board[row] & flag);
+                    if ((cell & flag) == flag)
+                    {
+                        count++;
+                    }
+                    else if (prev != 0)
+                    {
+                        var rule = rules[ruleIndex];
+                        if (rule != count)
+                            return false;
+
+                        ruleIndex++;
+                        count = 0;
+                    }
+
+                    prev = cell;
+                }
+
+                if (prev != 0)
+                {
+                    if (ruleIndex >= rules.Length)
+                        return false;
+
+                    var rule = rules[ruleIndex];
+                    if (rule < count)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
         private bool Solve(int rowIndex)
         {
             if (rowIndex >= board.Length)
+            {
+#if DEBUG
                 return CheckBoard();
+#else
+                return true;
+#endif
+            }
 
             var possibleRows = GetPossibleRows(rowIndex);
             foreach (var row in possibleRows)
@@ -116,9 +168,13 @@ namespace NonogramInversor
                 // Play
                 board[rowIndex] = row;
 
-                var result = Solve(rowIndex + 1);
-                if (result)
-                    return true;
+                var isValid = PartialCheck(rowIndex);
+                if (isValid)
+                {
+                    var result = Solve(rowIndex + 1);
+                    if (result)
+                        return true;
+                }
 
                 // Rollback
                 board[rowIndex] = 0;
@@ -251,11 +307,16 @@ namespace NonogramInversor
 
             Test0();
             Test1();
-            // Test2();
+            Test2();
+            Test3();
+            Test4();
+            Test5();
         }
 
         static void Test(int[][] columns, int[][] rows)
         {
+            var sw = Stopwatch.StartNew();
+
             var game = new Nonogram(columns, rows);
             Console.WriteLine("Original:");
             game.Solve();
@@ -266,6 +327,9 @@ namespace NonogramInversor
             var solution = game.CalculateSolution();
             foreach (var row in solution)
                 Console.WriteLine(string.Join(" ", row));
+
+            sw.Stop();
+            Console.WriteLine($"{sw.ElapsedMilliseconds} ms");
         }
 
         static void Test0()
@@ -340,6 +404,150 @@ namespace NonogramInversor
                 new [] { 4, 4 },
                 new [] { 4, 2 },
                 new [] { 2 },
+            };
+
+            Test(columns, rows);
+        }
+
+        static void Test3()
+        {
+            var columns = new int[][]
+            {
+                new int[] { 3 },
+                new int[] { 4 },
+                new int[] { 1, 4, 3 },
+                new int[] { 1, 4 },
+                new int[] { 7, 5 },
+                new int[] { 2, 4 },
+                new int[] { 4, 4 },
+                new int[] { 2, 6 },
+                new int[] { 4 },
+                new int[] { 1, 4, 3 },
+                new int[] { 1, 4 },
+                new int[] { 7, 2 },
+                new int[] { 2, 4, 1 },
+                new int[] { 4, 3, 1 },
+                new int[] { 2, 7 },
+            };
+
+            var rows = new int[][]
+            {
+                new [] { 1, 1, 1, 1 },
+                new [] { 1, 3, 1, 3 },
+                new [] { 5, 5 },
+                new [] { 1, 2, 1, 2 },
+                new [] { 1, 1 },
+                new [] { 2, 2 },
+                new [] { 2, 2 },
+                new [] { 2, 2 },
+                new [] { 2, 2, 1 },
+                new [] { 3, 4, 3 },
+                new [] { 3, 6, 4 },
+                new [] { 2, 5, 4 },
+                new [] { 2, 6, 1, 1 },
+                new [] { 1, 2, 1, 1, 1 },
+                new [] { 1, 1, 1, 1, 3 },
+            };
+
+            Test(columns, rows);
+        }
+
+        static void Test4()
+        {
+            var columns = new int[][]
+            {
+                new int[] { 2, 6, 3 },
+                new int[] { 4, 6, 1 },
+                new int[] { 7, 1 },
+                new int[] { 6, 9, 1 },
+                new int[] { 6, 12 },
+                new int[] { 2, 12, 2 },
+                new int[] { 14, 1, 1 },
+                new int[] { 4, 7, 2, 2 },
+                new int[] { 3, 8, 3 },
+                new int[] { 7, 6, 4 },
+                new int[] { 3, 2, 4, 1, 2 },
+                new int[] { 2, 3, 3, 1, 1 },
+                new int[] { 1, 2, 3, 2, 2, 2 },
+                new int[] { 1, 8, 1, 1, 3 },
+                new int[] { 1, 2, 2, 2, 2 },
+            };
+
+            var rows = new int[][]
+            {
+                new int [] { 1, 1, 1, 1 },
+                new int [] { 2, 2, 1, 1 },
+                new int [] { 7, 2, 1 },
+                new int [] { 8, 3 },
+                new int [] { 2, 2, 2, 1 },
+                new int [] { 1, 8, 1 },
+                new int [] { 2, 3, 2, 3 },
+                new int [] { 1, 4, 4 },
+                new int [] { 1, 10 },
+                new int [] { 2, 9, 1 },
+                new int [] { 1, 8, 1 },
+                new int [] { 1, 9 },
+                new int [] { 11, 3 },
+                new int [] { 8, 4, 1 },
+                new int [] { 7, 2, 1 },
+                new int [] { 7, 2, 1 },
+                new int [] { 5, 4, 3 },
+                new int [] { 2, 2, 1, 2, 1, 1 },
+                new int [] { 1, 1, 2, 4, 2 },
+                new int [] { 2, 5, 4 },
+            };
+
+            Test(columns, rows);
+        }
+
+        static void Test5()
+        {
+            var columns = new int[][]
+            {
+                new int[] { 1, 1 },
+                new int[] { 1, 2, 1 },
+                new int[] { 3, 2 },
+                new int[] { 1, 1, 1, 6 },
+                new int[] { 3, 4 },
+                new int[] { 3, 2 },
+                new int[] { 3, 1, 2, 2 },
+                new int[] { 1, 2, 1, 2, 3 },
+                new int[] { 2, 3, 3, 4 },
+                new int[] { 4, 2, 9 },
+                new int[] { 7, 9 },
+                new int[] { 4, 2, 9 },
+                new int[] { 3, 1, 9 },
+                new int[] { 3, 2, 8 },
+                new int[] { 4, 5, 3 },
+                new int[] { 10, 1 },
+                new int[] { 10 },
+                new int[] { 10 },
+                new int[] { 9 },
+                new int[] { 3 },
+            };
+
+            var rows = new int[][]
+            {
+                new int[] { 1, 6 },
+                new int[] { 1, 8 },
+                new int[] { 1, 10 },
+                new int[] { 3, 3 },
+                new int[] { 3, 1, 1, 1, 3 },
+                new int[] { 15 },
+                new int[] { 8, 5 },
+                new int[] { 7 },
+                new int[] { 1, 9 },
+                new int[] { 12 },
+                new int[] { 6, 4 },
+                new int[] { 8, 3 },
+                new int[] { 2, 7, 3 },
+                new int[] { 2, 1, 6, 3 },
+                new int[] { 4, 6, 2 },
+                new int[] { 3, 6 },
+                new int[] { 9 },
+                new int[] { 7 },
+                new int[] { 3 },
+                new int[] { 4 },
             };
 
             Test(columns, rows);
