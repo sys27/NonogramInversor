@@ -2,215 +2,145 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Runtime.Intrinsics.X86;
 
 namespace NonogramInversor
 {
     class Nonogram
     {
+        private readonly int rows;
+        private readonly int columns;
         private readonly int[][] columnRules;
         private readonly int[][] rowRules;
-        private readonly uint[] board;
 
-        private readonly IDictionary<int, uint[]> cache;
-
-        public Nonogram(int[][] columns, int[][] rows)
+        public Nonogram(int[][] columnRules, int[][] rowRules)
         {
-            this.columnRules = columns;
-            this.rowRules = rows;
-            this.board = new uint[rows.Length];
-            this.cache = new Dictionary<int, uint[]>();
+            this.columns = columnRules.Length;
+            this.rows = rowRules.Length;
+            this.columnRules = columnRules;
+            this.rowRules = rowRules;
         }
 
-        private uint[] GetPossibleRows(int rowIndex)
+        private List<Line> Generate(int[] rules, int length)
         {
-            if (cache.TryGetValue(rowIndex, out var cachedResult))
-                return cachedResult;
+            var result = new List<(int offset, Line line)>();
 
-            var blocks = new Queue<(uint row, int consumed)>();
-            blocks.Enqueue((0, 0));
+            var remainingSums = new int[rules.Length];
+            for (var sumIndex = 1; sumIndex < remainingSums.Length; sumIndex++)
+                remainingSums[sumIndex] = rules[sumIndex - 1] + 1 + remainingSums[sumIndex - 1];
 
-            var length = columnRules.Length;
+            var initial = new Line();
+            for (var i = 0; i < rules.Length; i++)
+                initial = initial.SetAt(remainingSums[i], rules[i]);
 
-            var rules = rowRules[rowIndex];
+            result.Add((0, initial));
+
+            var max = 1u << length;
 
             for (var ruleIndex = 0; ruleIndex < rules.Length; ruleIndex++)
             {
-                var rule = rules[ruleIndex];
+                var remainingSum = remainingSums[ruleIndex];
 
-                var remainingSum = 0;
-                for (var sumIndex = ruleIndex + 1; sumIndex < rules.Length; sumIndex++)
-                    remainingSum += rules[sumIndex] + 1;
-
-                var end = length - (rule + remainingSum);
-
-                var flag = 1;
-                for (var oneIndex = 0; oneIndex < rule - 1; oneIndex++)
-                    flag |= flag << 1;
-
-                for (var blocksCount = blocks.Count; blocksCount > 0; blocksCount--)
+                var window = result.Count;
+                for (var index = 0; index < window; index++)
                 {
-                    var (block, consumed) = blocks.Dequeue();
+                    var (offset, current) = result[index];
 
-                    for (var start = consumed; start <= end; start++)
+                    for (var shift = 0; ; shift++)
                     {
-                        var positionedFlag = (uint)(flag << (length - rule - start));
-                        var newBlock = block | positionedFlag;
-                        var newConsumed = consumed + rule + 1;
+                        current = current.ShiftLeftAt(remainingSum + offset + shift);
+                        if (current.Bits >= max)
+                            break;
 
-                        blocks.Enqueue((newBlock, newConsumed));
+                        result.Add((offset + shift + 1, current));
                     }
                 }
             }
 
-            var result = blocks.Select(x => x.row).ToArray();
-            cache[rowIndex] = result;
-
-            return result;
+            return result.Select(x => x.line).ToList();
         }
 
-        private bool CheckBoard()
+        private void Reduce(List<List<Line>> rows, List<List<Line>> columns)
         {
-#if DEBUG
-            for (var row = 0; row < board.Length; row++)
+            var allSet = (1u << this.columns) - 1;
+
+            int count;
+            do
             {
-                var rules = rowRules[row];
-                var totalCells = 0;
-                for (var ruleIndex = 0; ruleIndex < rules.Length; ruleIndex++)
-                    totalCells += rules[ruleIndex];
+                count = 0;
 
-                var actualCells = Popcnt.PopCount(board[row]);
-                if (actualCells != totalCells)
-                    return false;
-            }
-#endif
-
-            for (var column = 0; column < columnRules.Length; column++)
-            {
-                var rules = columnRules[column];
-                var totalCells = 0;
-                for (var ruleIndex = 0; ruleIndex < rules.Length; ruleIndex++)
-                    totalCells += rules[ruleIndex];
-
-                var actualCells = 0;
-                var flag = 1 << (columnRules.Length - column - 1);
-
-                for (var row = 0; row < board.Length; row++)
-                    if ((board[row] & flag) == flag)
-                        actualCells++;
-
-                if (actualCells != totalCells)
-                    return false;
-            }
-
-            return true;
-        }
-
-        private bool PartialCheck(int rowIndex)
-        {
-            for (var column = 0; column < columnRules.Length; column++)
-            {
-                var ruleIndex = 0;
-                var rules = columnRules[column];
-
-                var flag = 1 << (columnRules.Length - column - 1);
-                var count = 0;
-                var prev = 0u;
-
-                for (var row = 0; row <= rowIndex && row < board.Length; row++)
+                for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
                 {
-                    var cell = (uint)(board[row] & flag);
-                    if ((cell & flag) == flag)
+                    var row = rows[rowIndex];
+                    var alwaysSet = row.Aggregate((a, b) => a & b);
+                    var alwaysUnset = row.Aggregate((a, b) => a | b);
+                    if (alwaysSet.Bits == 0 && alwaysUnset.Bits == allSet)
+                        continue;
+
+                    for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
                     {
-                        count++;
+                        var column = columns[columnIndex];
+
+                        if (alwaysSet.Get(columnIndex))
+                            count += column.RemoveAll(c => !c.Get(rowIndex));
+
+                        if (!alwaysUnset.Get(columnIndex))
+                            count += column.RemoveAll(c => c.Get(rowIndex));
                     }
-                    else if (prev != 0)
+                }
+
+                for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
+                {
+                    var column = columns[columnIndex];
+                    var alwaysSet = column.Aggregate((a, b) => a & b);
+                    var alwaysUnset = column.Aggregate((a, b) => a | b);
+                    if (alwaysSet.Bits == 0 && alwaysUnset.Bits == allSet)
+                        continue;
+
+                    for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
                     {
-                        var rule = rules[ruleIndex];
-                        if (rule != count)
-                            return false;
+                        var row = rows[rowIndex];
 
-                        ruleIndex++;
-                        count = 0;
+                        if (alwaysSet.Get(rowIndex))
+                            count += row.RemoveAll(r => !r.Get(columnIndex));
+
+                        if (!alwaysUnset.Get(rowIndex))
+                            count += row.RemoveAll(r => r.Get(columnIndex));
                     }
-
-                    prev = cell;
                 }
-
-                if (prev != 0)
-                {
-                    if (ruleIndex >= rules.Length)
-                        return false;
-
-                    var rule = rules[ruleIndex];
-                    if (rule < count)
-                        return false;
-                }
-            }
-
-            return true;
+            } while (count > 0);
         }
 
-        private bool Solve(int rowIndex)
+        public int[][] Solve()
         {
-            if (rowIndex >= board.Length)
-            {
-#if DEBUG
-                return CheckBoard();
-#else
-                return true;
-#endif
-            }
+            var rows = rowRules.Select(x => Generate(x, this.columns)).ToList();
+            var columns = columnRules.Select(x => Generate(x, this.rows)).ToList();
+            Reduce(rows, columns);
 
-            var possibleRows = GetPossibleRows(rowIndex);
-            foreach (var row in possibleRows)
-            {
-                // Play
-                board[rowIndex] = row;
+            //Print(rows.SelectMany(x => x).ToList());
 
-                var isValid = PartialCheck(rowIndex);
-                if (isValid)
-                {
-                    var result = Solve(rowIndex + 1);
-                    if (result)
-                        return true;
-                }
-
-                // Rollback
-                board[rowIndex] = 0;
-            }
-
-            return false;
+            return CalculateSolution(rows.SelectMany(x => x).ToList(), columns.SelectMany(x => x).ToList());
         }
 
-        public void Solve()
-        {
-            var result = Solve(0);
-            if (!result)
-                throw new Exception();
-        }
-
-        public void Inverse()
-        {
-            for (var row = 0; row < board.Length; row++)
-                board[row] = ~board[row];
-        }
-
-        public int[][] CalculateSolution()
+        private int[][] CalculateSolution(List<Line> rows, List<Line> columns)
         {
             var results = new int[columnRules.Length + rowRules.Length][];
 
-            for (var column = 0; column < columnRules.Length; column++)
+            var rowSelector = (1u << columns.Count) - 1;
+            var columnSelector = (1u << rows.Count) - 1;
+
+            for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
             {
+                var column = columns[columnIndex];
+
                 var rules = new List<int> { 0 };
                 var index = 0;
 
-                var flag = 1 << (columnRules.Length - column - 1);
                 var prev = 0u;
 
-                for (var row = 0; row < board.Length; row++)
+                for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
                 {
-                    var cell = (uint)(board[row] & flag);
+                    var flag = 1u << rowIndex;
+                    var cell = ((~column.Bits) & columnSelector) & flag;
                     if (cell == flag)
                     {
                         if (rules.Count == index)
@@ -226,20 +156,22 @@ namespace NonogramInversor
                     prev = cell;
                 }
 
-                results[column] = rules.ToArray();
+                results[columnIndex] = rules.ToArray();
             }
 
-            for (var row = 0; row < board.Length; row++)
+            for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
             {
+                var row = rows[rowIndex];
+
                 var rules = new List<int> { 0 };
                 var index = 0;
 
                 var prev = 0u;
 
-                for (var column = 0; column < columnRules.Length; column++)
+                for (var columnIndex = 0; columnIndex < columnRules.Length; columnIndex++)
                 {
-                    var flag = 1 << (columnRules.Length - column - 1);
-                    var cell = (uint)(board[row] & flag);
+                    var flag = 1u << columnIndex;
+                    var cell = ((~row.Bits) & rowSelector) & flag;
                     if (cell == flag)
                     {
                         if (rules.Count == index)
@@ -255,22 +187,22 @@ namespace NonogramInversor
                     prev = cell;
                 }
 
-                results[columnRules.Length + row] = rules.ToArray();
+                results[columnRules.Length + rowIndex] = rules.ToArray();
             }
 
             return results;
         }
 
-        public void Print()
+        private void Print(List<Line> array)
         {
-            for (var rowIndex = 0; rowIndex < board.Length; rowIndex++)
+            for (var rowIndex = 0; rowIndex < array.Count; rowIndex++)
             {
-                var row = board[rowIndex];
+                var row = array[rowIndex];
 
-                for (var columnIndex = columnRules.Length - 1; columnIndex >= 0; columnIndex--)
+                for (var columnIndex = 0; columnIndex < columns; columnIndex++)
                 {
                     var flag = 1 << columnIndex;
-                    if ((row & flag) == flag)
+                    if ((row.Bits & flag) == flag)
                         Console.Write(" \x25A0 |");
                     else
                         Console.Write("   |");
@@ -279,6 +211,30 @@ namespace NonogramInversor
                 Console.WriteLine();
             }
         }
+    }
+
+    public readonly struct Line
+    {
+        public Line(uint bits) => Bits = bits;
+
+        public static Line operator &(Line left, Line right)
+            => new Line(left.Bits & right.Bits);
+        public static Line operator |(Line left, Line right)
+            => new Line(left.Bits | right.Bits);
+
+        public override string ToString()
+            => Convert.ToString(Bits, 2);
+
+        public bool Get(int index)
+            => (Bits & (1u << index)) != 0;
+        public Line Set(int index)
+            => new Line(Bits | (1u << index));
+        public Line SetAt(int start, int value)
+            => new Line(Bits | ((1u << (start + value)) - 1 - ((1u << start) - 1)));
+        public Line ShiftLeftAt(int index)
+            => new Line((Bits >> index << (index + 1)) | (Bits & ((1u << index) - 1)));
+
+        public uint Bits { get; }
     }
 
     class Program
@@ -319,16 +275,13 @@ namespace NonogramInversor
 
             var game = new Nonogram(columns, rows);
             Console.WriteLine("Original:");
-            game.Solve();
-            game.Print();
-            Console.WriteLine("Inverted:");
-            game.Inverse();
-            game.Print();
-            var solution = game.CalculateSolution();
+            var solution = game.Solve();
+
+            sw.Stop();
+
             foreach (var row in solution)
                 Console.WriteLine(string.Join(" ", row));
 
-            sw.Stop();
             Console.WriteLine($"{sw.ElapsedMilliseconds} ms");
         }
 
